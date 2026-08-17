@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -13,9 +13,16 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Shared Auth Code - Mã xác thực chung",
-  description:
-    "Trang hiển thị mã xác thực chung đồng bộ cho tất cả người dùng. Mã tự động thay đổi mỗi 10 phút.",
+  title: "Xác thực mã",
+  description: "Mã xác thực chung đồng bộ cho các nhóm",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#1a1a2e",
 };
 
 export default function RootLayout({
@@ -28,7 +35,7 @@ export default function RootLayout({
       lang="vi"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-animated">{children}</body>
+      <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
 }

@@ -1,203 +1,223 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 
-// ===== LOGIC: Generate deterministic 3-digit code from time slot =====
-// Uses a simple hash of the 10-minute slot index to produce a code 000-999.
-// All users compute the same slot index at the same time → same code.
+// ===== CONFIG =====
+const CODE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const CODE_DIGITS = 6;
 
-const CODE_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const GROUPS = [
+  { id: 1, name: "Nhóm 1", seed: 2654435761 },
+  { id: 2, name: "Nhóm 2", seed: 1597334677 },
+  { id: 3, name: "Nhóm 3", seed: 3714946381 },
+  { id: 4, name: "Nhóm 4", seed: 2246822519 },
+  { id: 5, name: "Nhóm 5", seed: 1013904223 },
+  { id: 6, name: "Nhóm 6", seed: 3862272853 },
+  { id: 7, name: "Nhóm 7", seed: 1664525 },
+];
 
-
-function hashSlotIndex(slotIndex: number): number {
-  // Simple deterministic hash: multiply by a prime, mix bits, mod 1000
-  let h = slotIndex * 2654435761; // Knuth multiplicative hash
-  h = ((h >>> 16) ^ h) * 0x45d9f3b;
-  h = ((h >>> 16) ^ h) * 0x45d9f3b;
+// ===== LOGIC =====
+function hashCode(slotIndex: number, seed: number): string {
+  let h = Math.imul(slotIndex, seed);
+  h = Math.imul((h >>> 16) ^ h, 0x45d9f3b);
+  h = Math.imul((h >>> 16) ^ h, 0x45d9f3b);
   h = (h >>> 16) ^ h;
-  return Math.abs(h) % 1000;
+  const code = Math.abs(h) % Math.pow(10, CODE_DIGITS);
+  return code.toString().padStart(CODE_DIGITS, "0");
 }
 
-function getCurrentSlotIndex(): number {
-  return Math.floor(Date.now() / CODE_INTERVAL_MS);
+function formatCode(code: string): string {
+  // Format as "XXX XXX"
+  const mid = Math.floor(code.length / 2);
+  return code.slice(0, mid) + " " + code.slice(mid);
 }
 
-function getSlotStartTime(slotIndex: number): number {
-  return slotIndex * CODE_INTERVAL_MS;
-}
-
-function getCodeForSlot(slotIndex: number): string {
-  return hashSlotIndex(slotIndex).toString().padStart(3, "0");
-}
-
-// ===== COMPONENT =====
-
-interface CodeState {
-  currentCode: string;
+interface AppState {
+  slotIndex: number;
   remainingSeconds: number;
   totalSeconds: number;
-  slotIndex: number;
 }
 
-function computeState(): CodeState {
+function computeState(): AppState {
   const now = Date.now();
-  const slotIndex = getCurrentSlotIndex();
-  const slotStart = getSlotStartTime(slotIndex);
+  const slotIndex = Math.floor(now / CODE_INTERVAL_MS);
+  const slotStart = slotIndex * CODE_INTERVAL_MS;
   const remaining = CODE_INTERVAL_MS - (now - slotStart);
 
   return {
-    currentCode: getCodeForSlot(slotIndex),
+    slotIndex,
     remainingSeconds: Math.max(0, Math.ceil(remaining / 1000)),
     totalSeconds: CODE_INTERVAL_MS / 1000,
-    slotIndex,
   };
 }
 
-function formatTime(totalSeconds: number): string {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes.toString().padStart(2, "0")}:${seconds
-    .toString()
-    .padStart(2, "0")}`;
+// ===== CIRCULAR PROGRESS COMPONENT =====
+function CircleTimer({
+  remaining,
+  total,
+}: {
+  remaining: number;
+  total: number;
+}) {
+  const size = 32;
+  const strokeWidth = 3;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const progress = remaining / total;
+  const dashOffset = circumference * (1 - progress);
+  const isUrgent = remaining <= 30;
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      className="countdown-circle flex-shrink-0"
+    >
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        strokeWidth={strokeWidth}
+        className="countdown-circle-track"
+      />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        strokeWidth={strokeWidth}
+        strokeDasharray={circumference}
+        strokeDashoffset={dashOffset}
+        strokeLinecap="round"
+        className={`countdown-circle-progress ${isUrgent ? "urgent" : ""}`}
+      />
+    </svg>
+  );
 }
 
+// ===== MAIN COMPONENT =====
 export default function AuthCodeDisplay() {
-  const [state, setState] = useState<CodeState | null>(null);
+  const [state, setState] = useState<AppState | null>(null);
   const [prevSlotIndex, setPrevSlotIndex] = useState<number | null>(null);
-  const [codeAnimKey, setCodeAnimKey] = useState(0);
+  const [animating, setAnimating] = useState(false);
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+
+  const handleCopy = useCallback((id: number, code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 1500);
+  }, []);
 
   const tick = useCallback(() => {
     const newState = computeState();
     setState((prev) => {
       if (prev && prev.slotIndex !== newState.slotIndex) {
-        // Code just changed — trigger animation
-        setCodeAnimKey((k) => k + 1);
+        setPrevSlotIndex(prev.slotIndex);
+        setAnimating(true);
+        setTimeout(() => setAnimating(false), 400);
       }
       return newState;
     });
-    if (prevSlotIndex === null) {
-      setPrevSlotIndex(newState.slotIndex);
-    }
-  }, [prevSlotIndex]);
+  }, []);
 
   useEffect(() => {
-    tick(); // Initial
+    tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [tick]);
 
+  const codes = useMemo(() => {
+    if (!state) return [];
+    return GROUPS.map((group) => ({
+      ...group,
+      code: hashCode(state.slotIndex, group.seed),
+    }));
+  }, [state?.slotIndex]);
+
   if (!state) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
-  const progressPercent =
-    ((state.totalSeconds - state.remainingSeconds) / state.totalSeconds) * 100;
-
-  const isUrgent = state.remainingSeconds <= 60;
+  const minutes = Math.floor(state.remainingSeconds / 60);
+  const seconds = state.remainingSeconds % 60;
+  const timeStr = `${minutes}:${seconds.toString().padStart(2, "0")}`;
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen px-4 py-8 relative overflow-hidden">
-      {/* Decorative floating particles */}
-      <FloatingParticles />
-
-      {/* Main content */}
-      <div className="relative z-10 flex flex-col items-center w-full max-w-md">
-
-
-        {/* Current Code Card */}
-        <div
-          key={codeAnimKey}
-          className="fade-in-up w-full rounded-2xl border border-card-border bg-card-bg backdrop-blur-xl p-8 sm:p-10 glow-pulse"
-        >
-          {/* Code label */}
-          <div className="text-center mb-2">
-            <span className="text-xs font-semibold tracking-widest text-accent uppercase">
-              Mã hiện tại
+    <div className="flex flex-col min-h-screen max-w-lg mx-auto">
+      {/* Header */}
+      <header className="sticky top-0 z-20 bg-background/95 backdrop-blur-md px-4 pt-4 pb-3 border-b border-divider">
+        <div className="flex items-center justify-between mb-3">
+          <h1 className="text-lg font-semibold text-foreground tracking-tight">
+            Xác thực mã
+          </h1>
+          <div className="flex items-center gap-2">
+            <CircleTimer
+              remaining={state.remainingSeconds}
+              total={state.totalSeconds}
+            />
+            <span
+              className={`text-sm font-mono font-medium ${
+                state.remainingSeconds <= 30 ? "text-red-400" : "text-accent"
+              }`}
+            >
+              {timeStr}
             </span>
           </div>
-
-          {/* Code digits */}
-          <div className="flex justify-center items-center gap-3 sm:gap-4 my-6">
-            {state.currentCode.split("").map((digit, i) => (
-              <div
-                key={`${codeAnimKey}-${i}`}
-                className="fade-in-up w-20 h-24 sm:w-24 sm:h-28 rounded-xl bg-gradient-to-br from-accent/15 to-accent/5 border border-accent/25 flex items-center justify-center"
-                style={{ animationDelay: `${i * 0.1}s` }}
-              >
-                <span className="text-5xl sm:text-6xl font-mono font-bold text-foreground tracking-wider">
-                  {digit}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          {/* Countdown */}
-          <div className="mt-6">
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-xs text-text-muted">Thời gian còn lại</span>
-              <span
-                className={`text-sm font-mono font-semibold ${
-                  isUrgent ? "text-red-400" : "text-accent"
-                }`}
-              >
-                {formatTime(state.remainingSeconds)}
-              </span>
-            </div>
-
-            {/* Progress bar */}
-            <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-1000 ease-linear ${
-                  isUrgent
-                    ? "bg-gradient-to-r from-red-500 to-orange-400"
-                    : "countdown-bar"
-                }`}
-                style={{ width: `${100 - progressPercent}%` }}
-              />
-            </div>
-          </div>
         </div>
+      </header>
 
-
+      {/* Code List */}
+      <div className="flex-1 px-4 pb-8">
+        {codes.map((item, index) => (
+          <div
+            key={item.id}
+            className="fade-in border-b border-divider py-4"
+            style={{ animationDelay: `${index * 0.04}s` }}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-text-muted mb-1">
+                  {item.name}
+                </p>
+                <p
+                  className={`text-3xl font-mono font-bold text-accent tracking-wider ${
+                    animating ? "code-flip" : ""
+                  }`}
+                >
+                  {formatCode(item.code)}
+                </p>
+              </div>
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <button
+                  onClick={() => handleCopy(item.id, item.code)}
+                  className="p-1.5 rounded-lg active:bg-white/10 transition-colors"
+                  aria-label={`Copy code ${item.name}`}
+                >
+                  {copiedId === item.id ? (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                  )}
+                </button>
+                <CircleTimer
+                  remaining={state.remainingSeconds}
+                  total={state.totalSeconds}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
-    </div>
-  );
-}
-
-// ===== Floating Particles Background =====
-function FloatingParticles() {
-  // Fixed set of particles with deterministic positions
-  const particles = [
-    { size: 4, left: 10, top: 20, duration: 8, delay: 0 },
-    { size: 6, left: 25, top: 60, duration: 12, delay: 2 },
-    { size: 3, left: 45, top: 30, duration: 10, delay: 4 },
-    { size: 5, left: 70, top: 70, duration: 9, delay: 1 },
-    { size: 4, left: 85, top: 15, duration: 11, delay: 3 },
-    { size: 7, left: 55, top: 85, duration: 13, delay: 5 },
-    { size: 3, left: 30, top: 45, duration: 7, delay: 6 },
-    { size: 5, left: 90, top: 50, duration: 14, delay: 2 },
-  ];
-
-  return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {particles.map((p, i) => (
-        <div
-          key={i}
-          className="particle absolute rounded-full bg-accent/20"
-          style={{
-            width: p.size,
-            height: p.size,
-            left: `${p.left}%`,
-            top: `${p.top}%`,
-            animationDuration: `${p.duration}s`,
-            animationDelay: `${p.delay}s`,
-          }}
-        />
-      ))}
     </div>
   );
 }
